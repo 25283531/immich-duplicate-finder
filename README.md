@@ -152,6 +152,14 @@
 ### 方式一：使用预构建镜像（最简单 ⭐⭐⭐⭐⭐）
 
 每次提交代码，GitHub Actions 会自动构建多架构镜像（amd64/arm64）并推送到 GitHub Container Registry。
+我们提供两种镜像变体，请按需选择（99% 的用户选轻量版即可）：
+
+| 变体 | 标签 | 压缩体积 | 功能 | 推荐 |
+|------|------|----------|------|------|
+| **轻量版（默认）** | `latest` | **~450MB** | Immich 原生重复检测、批量删除、路径映射、操作日志 | ⭐ 99% 用户首选 |
+| 完整版 | `latest-full` | ~5.5GB | 轻量版全部功能 **+** 本地 FAISS 向量检测（ResNet152 视觉相似度） | 需要本地检测相似图时用 |
+
+#### A1. 轻量版（推荐，仅 Immich 原生检测，~450MB）
 
 ```bash
 # 1. 拉取镜像（支持 amd64/arm64）
@@ -166,13 +174,15 @@ docker run -d \
   -e TZ=Asia/Shanghai \
   ghcr.io/25283531/immich-duplicate-finder:latest
 
-# 3. 如需访问 NAS 上的照片目录（用于删除源文件）
+# 3. 如需访问 NAS 上的照片目录（用于物理删除源文件）
+#    关键：容器内挂载路径必须等于 NAS 真实路径（左右两边相同）
 docker run -d \
   --name immich-duplicate-finder \
   --restart unless-stopped \
   -p 8503:8503 \
   -v immich-df-data:/app/data \
-  -v /volume1/photo:/mnt/nas_photo:ro \
+  -v /share/照片视频/immich_photos:/share/照片视频/immich_photos \
+  -v /share/照片视频:/share/照片视频 \
   -e TZ=Asia/Shanghai \
   ghcr.io/25283531/immich-duplicate-finder:latest
 
@@ -180,13 +190,32 @@ docker run -d \
 #    http://服务器IP:8503
 ```
 
+#### A2. 完整版（含 FAISS 本地检测，~5.5GB）
+
+```bash
+docker pull ghcr.io/25283531/immich-duplicate-finder:latest-full
+
+docker run -d \
+  --name immich-duplicate-finder \
+  --restart unless-stopped \
+  -p 8503:8503 \
+  -v immich-df-data:/app/data \
+  -v /share/照片视频/immich_photos:/share/照片视频/immich_photos \
+  -v /share/照片视频:/share/照片视频 \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/25283531/immich-duplicate-finder:latest-full
+```
+
 **镜像标签说明**：
 
-| 标签 | 说明 |
+| 标签 | 适用 |
 |------|------|
-| `latest` | 最新稳定版（main 分支） |
-| `v0.2.0` | 特定版本（标签发布） |
-| `main` | main 分支最新提交 |
+| `latest` | 轻量版最新（推荐） |
+| `latest-full` | 完整版最新（含 FAISS） |
+| `v0.2.0` | 轻量版指定版本 |
+| `v0.2.0-full` | 完整版指定版本 |
+| `main` | 轻量版 main 分支 |
+| `main-full` | 完整版 main 分支 |
 
 ### 方式二：Docker Compose 本地构建（⭐⭐⭐⭐）
 

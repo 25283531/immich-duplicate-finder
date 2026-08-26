@@ -1,52 +1,144 @@
-# 基于 Python 3.10 官方镜像（锁定 bookworm 避免 bullseye EOL）
-FROM python:3.10-slim-bookworm
+# ============================================================
+# Immich 重复文件查找工具 Dockerfile
+#
+# 双变体：
+#   --target runtime-core  轻量版（默认）→ 约 450MB
+#                          仅支持 Immich 原生重复检测
+#                          不含 PyTorch / FAISS / ResNet152 权重
+#   --target runtime-full  完整版 → 约 5.5GB
+#                          支持 Immich 原生检测 + FAISS 本地检测
+#                          含 PyTorch 2.2.1 + torchvision + FAISS
+#
+# 两者都用多阶段构建 + pip --no-cache-dir + 清理 __pycache__
+# ============================================================
 
-# 设置工作目录
+# ------------------------------------------------------------
+# 阶段 0 (base): 所有变体共用的基础运行时镜像
+# 只装运行时的系统库（不装 gcc / g++ / build-essential）
+# ------------------------------------------------------------
+FROM python:3.10-slim-bookworm AS base
+
 WORKDIR /app
 
-# 安装系统依赖
-# bookworm 中 libgl1-mesa-glx 已被 libgl1 替代
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Pillow-heif、ImageHash、Streamlit 显示所需的运行时库
+# 注意：**不装 gcc**，编译动作全部放在 builder 阶段
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        gcc \
         libgl1 \
         libglib2.0-0 \
         libsm6 \
         libxext6 \
         libxrender1 \
+        libde265-0 \
+        libheif1 \
+        tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && find / -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# ------------------------------------------------------------
+# 阶段 1-builder-core: 编译+安装轻量版依赖（无 torch/faiss）
+# ------------------------------------------------------------
+FROM base AS builder-core
+
+WORKDIR /install
+
+# pillow-heif 在某些平台需要编译 C 扩展
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        libc6-dev \
+        libheif-dev \
+        libde265-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
-COPY requirements.txt .
+COPY requirements-core.txt ./
 
-# 安装 Python 依赖
-# 通过 ARG 参数控制是否使用国内镜像源（默认不使用，适配 GitHub Actions）
-ARG PIP_INDEX_URL=""
-ARG PIP_TRUSTED_HOST=""
-RUN if [ -n "$PIP_INDEX_URL" ]; then \
-        pip config set global.index-url "$PIP_INDEX_URL" && \
-        pip config set global.trusted-host "$PIP_TRUSTED_HOST"; \
-    fi && \
-    pip install --no-cache-dir -r requirements.txt
+# --prefix=/install 把包安装到指定目录，方便后面拷贝
+RUN pip install --no-cache-dir --prefix=/install -r requirements-core.txt \
+    && find /install -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /install -name "*.pyc" -delete 2>/dev/null || true \
+    && find /install -name "tests" -type d -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /install -name "*.a" -delete 2>/dev/null || true
 
-# 复制应用代码
+# ------------------------------------------------------------
+# 阶段 1-builder-full: 编译+安装完整版依赖（含 torch/faiss）
+# ------------------------------------------------------------
+FROM base AS builder-full
+
+WORKDIR /install
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        libc6-dev \
+        libheif-dev \
+        libde265-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt \
+    && find /install -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /install -name "*.pyc" -delete 2>/dev/null || true \
+    && find /install -name "tests" -type d -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /install -name "*.a" -delete 2>/dev/null || true
+
+# ------------------------------------------------------------
+# 阶段 2A (runtime-core): 轻量版镜像（默认 ~450MB）
+# ------------------------------------------------------------
+FROM base AS runtime-core
+
+# 拷贝 builder-core 安装好的 Python 包
+COPY --from=builder-core /install /usr/local
+
+# 拷贝应用代码
 COPY . .
 
-# 创建数据目录
-RUN mkdir -p /app/data
-
-# 创建非 root 用户运行（安全）
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
-
-# 暴露端口
-EXPOSE 8503
+RUN mkdir -p /app/data && \
+    python -c "import streamlit, numpy, PIL, requests, pillow_heif; print('core deps OK')"
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8503/_stcore/health')" || exit 1
 
-# 启动命令
+EXPOSE 8503
+
+CMD ["streamlit", "run", "app.py", \
+     "--server.port", "8503", \
+     "--server.address", "0.0.0.0", \
+     "--server.headless", "true", \
+     "--server.runOnSave", "false"]
+
+# ------------------------------------------------------------
+# 阶段 2B (runtime-full): 完整版镜像（含 PyTorch/FAISS ~5.5GB）
+# 只有需要本地 FAISS 检测时才使用
+# ------------------------------------------------------------
+FROM base AS runtime-full
+
+# 拷贝 builder-full 安装好的 Python 包（含 torch/faiss）
+COPY --from=builder-full /install /usr/local
+
+# 拷贝应用代码
+COPY . .
+
+RUN mkdir -p /app/data && \
+    python -c "import streamlit, numpy, PIL, faiss, torch; print('full deps OK, torch version:', torch.__version__)"
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8503/_stcore/health')" || exit 1
+
+EXPOSE 8503
+
 CMD ["streamlit", "run", "app.py", \
      "--server.port", "8503", \
      "--server.address", "0.0.0.0", \

@@ -1,0 +1,11 @@
+# ============================================================
+# 轻量依赖（Immich 原生检测模式）
+# 不含 torch/torchvision，体积约 600MB
+# ============================================================
+requests==2.31.0
+streamlit==1.32.2
+streamlit-image-comparison==0.0.4
+numpy==1.26.4
+pillow==10.2.0
+pillow-heif
+ImageHash==4.3.1

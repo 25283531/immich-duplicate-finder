@@ -20,6 +20,38 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 _model = None
 _transform = None
 
+# 轻量版镜像（无 PyTorch/FAISS）统一提示文案
+_HINT_USE_FULL_IMAGE = (
+    "当前镜像为轻量版（不含 PyTorch / FAISS），仅支持 Immich 原生重复检测。\n"
+    "如需使用本地 FAISS 向量检测，请重新拉取完整版镜像：\n"
+    "  docker pull ghcr.io/25283531/immich-duplicate-finder:latest-full\n"
+    "或在 docker-compose.yml 中将镜像名改为 ghcr.io/25283531/immich-duplicate-finder:latest-full"
+)
+
+
+def _require_faiss():
+    """ 如果运行环境缺失 faiss，给出清晰提示并中断；否则返回 faiss 模块。 """
+    try:
+        import faiss  # noqa: F401
+        return faiss
+    except Exception as e:  # ImportError / ModuleNotFoundError
+        st.error(f"缺少 FAISS 依赖：{e}\n\n{_HINT_USE_FULL_IMAGE}")
+        st.stop()
+        return None
+
+
+def _require_torch():
+    """ 如果运行环境缺失 torch/torchvision，给出清晰提示并中断；否则返回 (torch, models, tv_t) 三元组。 """
+    try:
+        import torch  # noqa: F401
+        from torchvision import models as tv_models  # noqa: F401
+        from torchvision import transforms as tv_t  # noqa: F401
+        return torch, tv_models, tv_t
+    except Exception as e:
+        st.error(f"缺少 PyTorch / TorchVision 依赖：{e}\n\n{_HINT_USE_FULL_IMAGE}")
+        st.stop()
+        return None, None, None
+
 
 def _get_model_and_transform():
     """ 惰性加载 ResNet152 + 预处理 transform。
@@ -27,9 +59,15 @@ def _get_model_and_transform():
     global _model, _transform
     if _model is not None:
         return _model, _transform
-    import torch
-    from torchvision.models import resnet152, ResNet152_Weights
-    from torchvision.transforms import Compose, Resize, ToTensor, Normalize
+    torch, tv_models, tv_t = _require_torch()
+    if torch is None:
+        return None, None
+    resnet152 = tv_models.resnet152
+    ResNet152_Weights = tv_models.ResNet152_Weights
+    Compose = tv_t.Compose
+    Resize = tv_t.Resize
+    ToTensor = tv_t.ToTensor
+    Normalize = tv_t.Normalize
 
     m = resnet152(weights=ResNet152_Weights.DEFAULT)
     m.eval()
@@ -66,8 +104,12 @@ metadata_path = 'metadata.npy'
 
 def extract_features(image):
     """Extract features from an image using a pretrained model."""
-    import torch  # 延迟到函数内
+    torch, _, _ = _require_torch()
+    if torch is None:
+        return None
     model, transform = _get_model_and_transform()
+    if model is None:
+        return None
     image_tensor = transform(image).unsqueeze(0)  # Add batch dimension
     with torch.no_grad():
         features = model(image_tensor)
@@ -75,7 +117,9 @@ def extract_features(image):
 
 def init_or_load_faiss_index():
     """Initialize or load the FAISS index and metadata, ensuring index is ready for use."""
-    import faiss  # 延迟导入
+    faiss = _require_faiss()
+    if faiss is None:
+        return None, []
     if os.path.exists(index_path) and os.path.exists(metadata_path):
         index = faiss.read_index(index_path)
         metadata = np.load(metadata_path, allow_pickle=True).tolist()
@@ -86,7 +130,9 @@ def init_or_load_faiss_index():
 
 def save_faiss_index_and_metadata(index, metadata):
     """Save the FAISS index and metadata to disk."""
-    import faiss
+    faiss = _require_faiss()
+    if faiss is None:
+        return
     faiss.write_index(index, index_path)
     np.save(metadata_path, np.array(metadata, dtype=object))
 

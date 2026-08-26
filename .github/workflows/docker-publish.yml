@@ -16,12 +16,26 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 轻量版（默认）：仅 Immich 原生检测，体积约 ~450MB
+          - target: runtime-core
+            suffix: ""
+            description: "轻量版（推荐，仅 Immich 原生检测）"
+          # 完整版：支持本地 FAISS + PyTorch 检测，体积 ~5GB
+          - target: runtime-full
+            suffix: "-full"
+            description: "完整版（含 FAISS + PyTorch，本地检测用）"
+
+    name: ${{ matrix.description }} → ${{ matrix.target }}
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 设置 QEMU（多架构支持）
+      - name: 设置 QEMU（多架构支持：amd64 + arm64）
         uses: docker/setup-qemu-action@v3
 
       - name: 设置 Docker Buildx
@@ -40,27 +54,34 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=${{ matrix.suffix }}
+            latest=${{ matrix.suffix == '' }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            # core 变体（suffix 为空）额外打 latest
+            type=raw,value=latest,enable=${{ matrix.suffix == '' }}
+            # full 变体额外打 latest-full
+            type=raw,value=latest-full,enable=${{ matrix.suffix == '-full' }}
           labels: |
-            org.opencontainers.image.title=Immich 重复文件查找工具
-            org.opencontainers.image.description=基于 Immich API 的重复文件检测与批量删除工具
+            org.opencontainers.image.title=Immich 重复文件查找工具${{ matrix.description }}
+            org.opencontainers.image.description=基于 Immich API 的重复文件检测与批量删除工具${{ matrix.description }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.licenses=MIT
 
-      - name: 构建并推送镜像
+      - name: 构建并推送镜像 (target=${{ matrix.target }})
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
+          target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
