@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  immich-duplicate-finder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: immich-duplicate-finder
+    restart: unless-stopped
+    ports:
+      - "8503:8503"
+    volumes:
+      - ./data:/app/data
+      # 如果需要访问 NAS 上的照片目录（用于删除源文件）
+      # - /volume1/photo:/mnt/nas_photo:ro
+      # - /volume1/photo2:/mnt/nas_photo2:ro
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8503/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: '2.0'
+        reservations:
+          memory: 512m
+          cpus: '0.5'
