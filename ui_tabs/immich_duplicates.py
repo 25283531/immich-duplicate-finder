@@ -8,25 +8,72 @@ import streamlit as st
 from api import get_duplicates, getImage, getAssetInfo, getAssetDetail
 
 
+# 检测当前 streamlit 版本是否支持 @st.dialog (streamlit>=1.37)
+# 不支持则用"页面顶部大图面板"降级实现，保证 1.32+ 都可用
+_HAS_DIALOG = callable(getattr(st, "dialog", None))
+
+
 # ----------------------------------------------------------------------
-# 查看大图对话框（Streamlit 1.32+ 支持 @st.dialog）
+# 大图预览实现：优先用 @st.dialog，回退到页面顶层面板
 # ----------------------------------------------------------------------
-@st.dialog("🔍 查看大图", width="large")
-def _show_large_dialog(asset_id, immich_server_url, api_key, caption, info_text):
-    st.markdown(info_text)
-    # 比卡片缩略图更高清的版本
-    big_img = getImage(asset_id, immich_server_url, "Thumbnail", api_key)
-    if big_img:
-        st.image(big_img, caption=caption, use_container_width=True, output_format="auto")
-    else:
-        # 退化到快速缩略图
-        fast = getImage(asset_id, immich_server_url, "Thumbnail (fast)", api_key)
-        if fast:
-            st.image(fast, caption=caption + "（快速缩略图）", use_container_width=True)
+if _HAS_DIALOG:
+    @st.dialog("🔍 查看大图", width="large")
+    def _open_large_view(asset_id, immich_server_url, api_key, caption, info_text):
+        st.markdown(info_text)
+        big_img = getImage(asset_id, immich_server_url, "Thumbnail", api_key)
+        if big_img:
+            st.image(big_img, caption=caption, use_container_width=True, output_format="auto")
         else:
-            st.warning("暂无法加载缩略图，请检查 Immich 连接。")
-    if st.button("关闭"):
-        st.rerun()
+            fast = getImage(asset_id, immich_server_url, "Thumbnail (fast)", api_key)
+            if fast:
+                st.image(fast, caption=caption + "（快速缩略图）", use_container_width=True)
+            else:
+                st.warning("暂无法加载缩略图，请检查 Immich 连接。")
+        if st.button("关闭预览"):
+            st.rerun()
+
+
+def _show_large(asset_id, immich_server_url, api_key, caption, info_text):
+    """ 打开大图预览；有 @st.dialog 用 dialog，否则写入 session_state 走降级面板。 """
+    if _HAS_DIALOG:
+        _open_large_view(asset_id, immich_server_url, api_key, caption, info_text)
+        return
+    st.session_state["large_preview"] = {
+        "asset_id": asset_id,
+        "caption": caption,
+        "info_text": info_text,
+    }
+    st.rerun()
+
+
+def _render_large_preview_panel(immich_server_url, api_key):
+    """ 页面顶部的降级大图预览面板（当 @st.dialog 不可用时渲染）。 """
+    preview = st.session_state.get("large_preview")
+    if not preview:
+        return
+    asset_id = preview["asset_id"]
+    caption = preview["caption"]
+    info_text = preview["info_text"]
+
+    with st.container(border=True):
+        col_close, col_title = st.columns([1, 9])
+        with col_close:
+            if st.button("✕ 关闭", key="close_large_preview", type="primary"):
+                del st.session_state["large_preview"]
+                st.rerun()
+        with col_title:
+            st.markdown("### 🔍 大图预览")
+
+        st.markdown(info_text)
+        big_img = getImage(asset_id, immich_server_url, "Thumbnail", api_key)
+        if big_img:
+            st.image(big_img, caption=caption, use_container_width=True, output_format="auto")
+        else:
+            fast = getImage(asset_id, immich_server_url, "Thumbnail (fast)", api_key)
+            if fast:
+                st.image(fast, caption=caption + "（快速缩略图）", use_container_width=True)
+            else:
+                st.warning("暂无法加载缩略图，请检查 Immich 连接。")
 
 
 def _render_asset_card(
@@ -41,7 +88,6 @@ def _render_asset_card(
     """渲染单个资产卡片：左边文本信息，右边缩略图"""
     asset_id = asset_ref.get("id", asset_ref.get("assetId", ""))
 
-    # --- 资产信息 ---
     asset_info = getAssetInfo(asset_id, [])
     if not asset_info:
         try:
@@ -65,16 +111,13 @@ def _render_asset_card(
         f"- **是否收藏:** {'是' if asset_info[8] else '否'}\n"
     )
     img_caption = f"资产 {i + 1} · {asset_info[1]}"
-    info_text_for_dialog = info_md
 
-    # --- 卡片容器：左信息 + 右缩略图 ---
     with st.container(border=True):
         c_info, c_img = st.columns([1, 1], gap="medium")
 
         with c_info:
             st.markdown(f"**🏷️ 资产 {i + 1}**")
             st.markdown(info_md)
-            # 保留按钮（放在信息区底部，醒目）
             if st.button(
                 f"⭐ 保留此资产，标记其余为删除候选",
                 key=f"keep_{duplicate_id}_{i}",
@@ -132,26 +175,28 @@ def _render_asset_card(
                 st.rerun()
 
         with c_img:
-            # 快速缩略图
             img = getImage(asset_id, immich_server_url, "Thumbnail (fast)", api_key)
             if img:
                 st.image(img, caption=img_caption, use_container_width=True, clamp=True)
             else:
                 st.info("（缩略图加载中或无权限，请先确认 Immich 连接）")
 
-            # 查看大图按钮：调用 dialog
             if st.button(
                 "🔍 点击查看大图",
                 key=f"preview_{duplicate_id}_{i}",
                 use_container_width=True,
             ):
-                _show_large_dialog(asset_id, immich_server_url, api_key, img_caption, info_text_for_dialog)
+                _show_large(asset_id, immich_server_url, api_key, img_caption, info_md)
 
 
 def render_immich_duplicates_page(immich_server_url, api_key, timeout):
     """渲染 Immich 原生重复检测页面"""
     st.header("🖼 Immich 原生重复检测")
     st.caption("直接调用 Immich 服务端的重复检测结果，无需下载所有缩略图")
+
+    # 顶部降级大图预览面板（仅当 @st.dialog 不可用且用户点了 查看大图 时显示）
+    if not _HAS_DIALOG:
+        _render_large_preview_panel(immich_server_url, api_key)
 
     with st.expander("💡 为什么使用 Immich 原生检测？", expanded=False):
         st.markdown(
@@ -171,7 +216,7 @@ def render_immich_duplicates_page(immich_server_url, api_key, timeout):
 
         **操作流程**：点击「⭐ 保留此资产」→ 同组其余资产加入删除候选 → 切到「🚀 批量删除管理」审核并统一执行。
 
-        **看图提示**：每个资产卡片右侧展示缩略图，点击「🔍 点击查看大图」可弹窗查看高清版，便于决定保留哪张。
+        **看图提示**：每个资产卡片右侧展示缩略图，点击「🔍 点击查看大图」可查看高清版，便于决定保留哪张。
         """
         )
 
@@ -218,7 +263,6 @@ def render_immich_duplicates_page(immich_server_url, api_key, timeout):
             f"📁 重复组 #{idx + 1} ({len(assets_in_group)} 个资产) - ID: {duplicate_id[:8]}...",
             expanded=(idx == 0),
         ):
-            # 逐行展示 2 个卡片；超过 2 个自动换行
             assets_to_show = assets_in_group[:8]
             rows = (len(assets_to_show) + 1) // 2
             pos = 0
