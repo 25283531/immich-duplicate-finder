@@ -1,17 +1,19 @@
-# 基于 Python 3.10 官方镜像
-FROM python:3.10-slim
+# 基于 Python 3.10 官方镜像（锁定 bookworm 避免 bullseye EOL）
+FROM python:3.10-slim-bookworm
 
 # 设置工作目录
 WORKDIR /app
 
 # 安装系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
+# bookworm 中 libgl1-mesa-glx 已被 libgl1 替代
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件
