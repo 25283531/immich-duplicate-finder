@@ -2,9 +2,15 @@ version: '3.8'
 
 services:
   immich-duplicate-finder:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # 方式 A: 使用预构建镜像（推荐，无需克隆代码）
+    image: ghcr.io/25283531/immich-duplicate-finder:latest
+    # 方式 B: 本地构建（取消下面 build 注释，注释上面 image）
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+    #     PIP_TRUSTED_HOST: pypi.tuna.tsinghua.edu.cn
     container_name: immich-duplicate-finder
     restart: unless-stopped
     ports:

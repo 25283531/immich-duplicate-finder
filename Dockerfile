@@ -18,9 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 
 # 安装 Python 依赖
-# 使用清华镜像加速（国内网络推荐）
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    || pip install --no-cache-dir -r requirements.txt
+# 通过 ARG 参数控制是否使用国内镜像源（默认不使用，适配 GitHub Actions）
+ARG PIP_INDEX_URL=""
+ARG PIP_TRUSTED_HOST=""
+RUN if [ -n "$PIP_INDEX_URL" ]; then \
+        pip config set global.index-url "$PIP_INDEX_URL" && \
+        pip config set global.trusted-host "$PIP_TRUSTED_HOST"; \
+    fi && \
+    pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
 COPY . .

@@ -35,8 +35,11 @@
    ```
    /volume1/docker/immich-duplicate-finder/
    ```
-2. 将 `app/` 目录下的所有文件上传到该目录
-3. 确保 `data/` 目录有写入权限
+2. 上传 `docker-compose.yml` 到该目录（**只需一个文件**）
+
+> 💡 **小贴士**：如果使用预构建镜像，无需上传整个项目，只需 `docker-compose.yml` 即可。GitHub Actions 会自动构建并推送镜像到 `ghcr.io/25283531/immich-duplicate-finder:latest`。
+
+如果需要本地构建（不使用预构建镜像），则将 `app/` 目录下所有文件上传，并确保 `data/` 目录有写入权限。
 
 ### 步骤 3：构建 Docker 镜像
 

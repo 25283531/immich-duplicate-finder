@@ -9,6 +9,9 @@
 ![Immich](https://img.shields.io/badge/Immich-v1.120+-4250AF?style=flat-square&logo=immich)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
 
+[![构建并推送 Docker 镜像](https://github.com/25283531/immich-duplicate-finder/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/25283531/immich-duplicate-finder/actions/workflows/docker-publish.yml)
+[![GitHub Container Registry](https://img.shields.io/badge/ghcr.io-latest-blue?style=flat-square&logo=github)](https://github.com/25283531/immich-duplicate-finder/pkgs/container/immich-duplicate-finder)
+
 </div>
 
 ---
@@ -146,11 +149,50 @@
 - Immich API Key（在 Immich 后台 → 设置 → 密钥中生成）
 - NAS 管理员权限（用于路径映射和文件删除）
 
-### 方式一：Docker 部署（推荐 ⭐⭐⭐⭐⭐）
+### 方式一：使用预构建镜像（最简单 ⭐⭐⭐⭐⭐）
+
+每次提交代码，GitHub Actions 会自动构建多架构镜像（amd64/arm64）并推送到 GitHub Container Registry。
+
+```bash
+# 1. 拉取镜像（支持 amd64/arm64）
+docker pull ghcr.io/25283531/immich-duplicate-finder:latest
+
+# 2. 直接运行（无需克隆代码）
+docker run -d \
+  --name immich-duplicate-finder \
+  --restart unless-stopped \
+  -p 8503:8503 \
+  -v immich-df-data:/app/data \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/25283531/immich-duplicate-finder:latest
+
+# 3. 如需访问 NAS 上的照片目录（用于删除源文件）
+docker run -d \
+  --name immich-duplicate-finder \
+  --restart unless-stopped \
+  -p 8503:8503 \
+  -v immich-df-data:/app/data \
+  -v /volume1/photo:/mnt/nas_photo:ro \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/25283531/immich-duplicate-finder:latest
+
+# 4. 浏览器访问
+#    http://服务器IP:8503
+```
+
+**镜像标签说明**：
+
+| 标签 | 说明 |
+|------|------|
+| `latest` | 最新稳定版（main 分支） |
+| `v0.2.0` | 特定版本（标签发布） |
+| `main` | main 分支最新提交 |
+
+### 方式二：Docker Compose 本地构建（⭐⭐⭐⭐）
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/your-username/immich-duplicate-finder.git
+git clone https://github.com/25283531/immich-duplicate-finder.git
 cd immich-duplicate-finder/app
 
 # 2. 修改配置（可选）
@@ -166,11 +208,11 @@ docker compose logs -f
 #    http://服务器IP:8503
 ```
 
-### 方式二：Python 直接运行
+### 方式三：Python 直接运行
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/your-username/immich-duplicate-finder.git
+git clone https://github.com/25283531/immich-duplicate-finder.git
 cd immich-duplicate-finder/app
 
 # 2. 创建虚拟环境
