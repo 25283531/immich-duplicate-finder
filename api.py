@@ -265,21 +265,22 @@ def get_duplicates(immich_server_url: str, api_key: str,
 
 def resolve_duplicate_group(immich_server_url: str, api_key: str,
                             duplicate_id: str, keep_asset_id: str,
-                            timeout: int = 30) -> bool:
+                            timeout: int = 30) -> tuple:
     """ 解析重复组：指定保留哪个资产，其余标记为删除候选。
     POST /api/duplicates/resolve
-    返回是否成功。"""
+    返回 (是否成功, 错误消息)。"""
     base = (immich_server_url or "").rstrip("/")
     if not base or not api_key:
-        return False
+        return False, "缺少服务器地址或 API 密钥"
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "x-api-key": api_key,
     }
+    # Immich v1.120+ 的字段名：duplicateIds(数组) + keepId
     payload = json.dumps({
-        "duplicateId": duplicate_id,
-        "keepAssetId": keep_asset_id,
+        "duplicateIds": [duplicate_id],
+        "keepId": keep_asset_id,
     })
     try:
         r = requests.post(
@@ -289,19 +290,26 @@ def resolve_duplicate_group(immich_server_url: str, api_key: str,
             timeout=timeout,
             verify=False,
         )
-        return 200 <= r.status_code < 300
-    except Exception:
-        return False
+        if 200 <= r.status_code < 300:
+            return True, None
+        # 打印详细错误，便于调试
+        msg = f"HTTP {r.status_code}: {r.text[:300]}"
+        print(f"[resolve_duplicate_group] 失败: {msg}")
+        return False, msg
+    except Exception as e:
+        msg = f"请求异常: {e}"
+        print(f"[resolve_duplicate_group] {msg}")
+        return False, msg
 
 
 def dismiss_duplicate_group(immich_server_url: str, api_key: str,
-                            duplicate_id: str, timeout: int = 30) -> bool:
+                            duplicate_id: str, timeout: int = 30) -> tuple:
     """ 忽略/删除一个重复组（从检测结果中移除）。
     DELETE /api/duplicates/{id}
-    返回是否成功。"""
+    返回 (是否成功, 错误消息)。"""
     base = (immich_server_url or "").rstrip("/")
     if not base or not api_key:
-        return False
+        return False, "缺少服务器地址或 API 密钥"
     headers = {"Accept": "application/json", "x-api-key": api_key}
     try:
         r = requests.delete(
@@ -310,9 +318,15 @@ def dismiss_duplicate_group(immich_server_url: str, api_key: str,
             timeout=timeout,
             verify=False,
         )
-        return 200 <= r.status_code < 300
-    except Exception:
-        return False
+        if 200 <= r.status_code < 300:
+            return True, None
+        msg = f"HTTP {r.status_code}: {r.text[:300]}"
+        print(f"[dismiss_duplicate_group] 失败: {msg}")
+        return False, msg
+    except Exception as e:
+        msg = f"请求异常: {e}"
+        print(f"[dismiss_duplicate_group] {msg}")
+        return False, msg
 
 # ------------------------------------------------------------
 # 【安全修复】旧 deleteAsset 委托给批量函数；默认 force=False（安全默认）

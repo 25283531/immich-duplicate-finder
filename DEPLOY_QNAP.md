@@ -88,19 +88,73 @@ docker build -t immich-duplicate-finder:latest .
    - CPU: 2核
    ```
 
-5. 如果需要删除 NAS 上的源文件，还要挂载照片目录：
+5. 如果需要删除 NAS 上的源文件，**关键：工具容器内的挂载路径必须与 NAS 真实路径完全相同**（不是挂到 `/mnt/xxx`）：
 
+   假设你的 Immich 配置如下：
    ```
-   # 只读挂载（安全）
-   - /volume1/photo → /mnt/nas_photo:ro
-   - /volume1/photo2 → /mnt/nas_photo2:ro
+   Immich volumes:
+     - /share/Container/immich/upload:/data
+     - /share/照片视频/immich_photos:/data/library
+     - /share/照片视频:/photos:rw
+   ```
+
+   那么工具容器的 volumes 应配置为：
+   ```
+   # 保持和 NAS 真实路径完全一致（最左边和最右边相同）
+   - /share/照片视频/immich_photos:/share/照片视频/immich_photos
+   - /share/照片视频:/share/照片视频
+   # - /share/Container/immich/upload:/share/Container/immich/upload  （缓存目录可挂可不挂）
+   ```
+
+   然后在 UI「🗺 路径映射配置」添加 3 条映射：
+
+   | 容器路径（Immich 内） | NAS 路径（工具容器内=真实路径） | 角色 |
+   |---------------------|-------------------------------|------|
+   | `/data/library` | `/share/照片视频/immich_photos` | 内部库原图目录 |
+   | `/photos` | `/share/照片视频` | 外部媒体库 |
+   | `/data` | `/share/Container/immich/upload` | 缓存目录（不删） |
+
+   路径转换示例：
+   ```
+   Immich API 返回:  /data/library/admin/2025/IMG_001.jpg
+                    匹配最长前缀: /data/library
+                    取 nas_path:  /share/照片视频/immich_photos
+                    相对路径:    admin/2025/IMG_001.jpg
+                    → 真实文件:   /share/照片视频/immich_photos/admin/2025/IMG_001.jpg
    ```
 
 ### 步骤 5：启动并访问
 
 1. 点击 **启动** 按钮
-2. 等待容器状态变为"运行中"
+2. 等待容器状态变为"运行中"（首次约 1-2 分钟）
 3. 浏览器访问：`http://NAS-IP:8503`
+
+---
+
+## 实际部署速查（你这个 Immich 配置直接用）
+
+```bash
+docker run -d \
+  --name immich-duplicate-finder \
+  --restart unless-stopped \
+  -p 8503:8503 \
+  -v /share/docker/immich-duplicate-finder/data:/app/data \
+  \
+  # 与 Immich 对应的 NAS 目录（左边=右边，保持路径一致）
+  -v /share/照片视频/immich_photos:/share/照片视频/immich_photos \
+  -v /share/照片视频:/share/照片视频 \
+  \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/25283531/immich-duplicate-finder:latest
+```
+
+**UI 中路径映射配置：**
+
+| 容器路径 | NAS 路径 | 作用 |
+|---------|---------|------|
+| `/data/library` | `/share/照片视频/immich_photos` | 新上传原图删除 |
+| `/photos` | `/share/照片视频` | 外部库老照片删除 |
+| `/data` | `/share/Container/immich/upload` | 缓存目录（跳过删除） |
 
 ---
 
