@@ -179,7 +179,13 @@ def _render_asset_card(
             if img:
                 st.image(img, caption=img_caption, use_container_width=True, clamp=True)
             else:
-                st.info("（缩略图加载中或无权限，请先确认 Immich 连接）")
+                st.warning(
+                    "⚠️ 缩略图加载失败。请检查：\n"
+                    "- Immich 服务器地址和 API Key 是否正确；\n"
+                    "- 容器内能否 ping 通 Immich（是否同网络）；\n"
+                    "- 容器日志 `docker logs immich-duplicate-finder` 中搜索 "
+                    f"`[getImage] asset={asset_id[:8]}` 查看详细错误。"
+                )
 
             if st.button(
                 "🔍 点击查看大图",

@@ -142,38 +142,141 @@ def fetchAssets(immich_server_url, api_key, timeout, type):
     return assets
 
 
-def getImage(asset_id, immich_server_url, photo_choice, api_key):
-    # Determine whether to fetch the original or thumbnail based on user selection
-    register_heif_opener()
-    ImageFile.LOAD_TRUNCATED_IMAGES = True
-    if photo_choice == 'Thumbnail (fast)':
-        response = requests.request(
-            "GET", f"{immich_server_url.rstrip('/')}/api/asset/thumbnail/{asset_id}?format=JPEG",
-            headers={'Accept': 'application/octet-stream', 'x-api-key': api_key},
-            data={}, verify=False,
-        )
-    else:
-        asset_download_url = f"{immich_server_url.rstrip('/')}/api/download/asset/{asset_id}"
-        response = requests.post(asset_download_url, headers={'Accept': 'application/octet-stream', 'x-api-key': api_key},
-                                 stream=True, verify=False)
-        
-    if response.status_code == 200 and 'image/' in response.headers.get('Content-Type', ''):
-        image_bytes = BytesIO(response.content)
+def _try_parse_image(content, asset_id_label, content_type_label):
+    """ 把字节流尝试解析成 PIL 图像；失败返回 None，诊断信息打印到控制台。 """
+    if not content:
+        print(f"[getImage] {asset_id_label}: 响应 body 为空")
+        return None
+    try:
+        image_bytes = BytesIO(content)
         try:
             image = Image.open(image_bytes)
             image.load()
-            image_bytes.close()
             return image
         except UnidentifiedImageError:
-            print(f"Failed to identify image for asset_id {asset_id}. Content-Type: {response.headers.get('Content-Type')}")
-            image_bytes.close()
+            print(
+                f"[getImage] {asset_id_label}: UnidentifiedImageError, "
+                f"Content-Type={content_type_label}, len={len(content)}"
+            )
             return None
         finally:
-            image_bytes.close()
-            del image_bytes 
-    else:
-        print(f"Skipping non-image asset_id {asset_id} with Content-Type: {response.headers.get('Content-Type')}")
+            try:
+                image_bytes.close()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[getImage] {asset_id_label}: 解析图像异常 {e}")
         return None
+
+
+def getImage(asset_id, immich_server_url, photo_choice, api_key):
+    """ 从 Immich 获取缩略图或原图，返回 PIL.Image；失败返回 None。
+
+    兼容 Immich v1.120+ 的 API：
+      GET /api/assets/{assetId}/thumbnail?format=JPEG     (缩略图，推荐)
+      POST /api/assets/{assetId}/original                 (下载原图，用于最高清预览)
+
+    Content-Type 判断放宽：Immich 对缩略图经常返回 application/octet-stream，但内容实际是 JPEG。
+    """
+    if not asset_id or not immich_server_url or not api_key:
+        return None
+
+    register_heif_opener()
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+    base = immich_server_url.rstrip("/")
+
+    # ------------------------------------------------------------------
+    # 1) 先确定请求方式和 URL
+    # ------------------------------------------------------------------
+    headers = {
+        "Accept": "application/octet-stream, image/*",
+        "x-api-key": api_key,
+    }
+    timeout = 30
+    response = None
+
+    # Thumbnail (fast) / Thumbnail → 走缩略图 API
+    if photo_choice and "Thumbnail" in photo_choice:
+        # 新路径：/api/assets/{id}/thumbnail (Immich v1.120+ OpenAPI)
+        candidates = [
+            ("GET", f"{base}/api/assets/{asset_id}/thumbnail?format=JPEG"),
+            # 兼容旧路径：/api/asset/thumbnail/{id} (部分老版本)
+            ("GET", f"{base}/api/asset/thumbnail/{asset_id}?format=JPEG"),
+        ]
+        for method, url in candidates:
+            try:
+                r = requests.request(
+                    method, url, headers=headers, timeout=timeout, verify=False,
+                )
+            except Exception as e:
+                print(f"[getImage] asset={asset_id[:8]} 请求异常 {url}: {e}")
+                continue
+            if 200 <= r.status_code < 300 and r.content:
+                response = r
+                break
+            # 记录诊断
+            print(
+                f"[getImage] asset={asset_id[:8]} 缩略图尝试失败 "
+                f"HTTP {r.status_code} {url}: {r.text[:120]}"
+            )
+    else:
+        # 原图/下载模式：新路径优先
+        candidates = [
+            ("POST", f"{base}/api/assets/{asset_id}/original"),
+            ("POST", f"{base}/api/download/asset/{asset_id}"),
+        ]
+        for method, url in candidates:
+            try:
+                r = requests.request(
+                    method, url, headers=headers, stream=True, timeout=timeout, verify=False,
+                )
+            except Exception as e:
+                print(f"[getImage] asset={asset_id[:8]} 请求异常 {url}: {e}")
+                continue
+            if 200 <= r.status_code < 300 and r.content:
+                response = r
+                break
+            print(
+                f"[getImage] asset={asset_id[:8]} 原图尝试失败 "
+                f"HTTP {r.status_code} {url}: {r.text[:120]}"
+            )
+
+    if response is None:
+        print(f"[getImage] asset={asset_id[:8]} 所有 URL 都失败")
+        return None
+
+    # ------------------------------------------------------------------
+    # 2) 解析图像（放宽 Content-Type 限制）
+    # ------------------------------------------------------------------
+    ct = response.headers.get("Content-Type", "")
+    label = f"asset={asset_id[:8]}, choice={photo_choice}"
+
+    # 最常见：Content-Type 像 image/jpeg 或 application/octet-stream
+    if "image/" in ct or ct == "" or "application/octet-stream" in ct or "json" not in ct.lower():
+        parsed = _try_parse_image(response.content, label, ct)
+        if parsed is not None:
+            return parsed
+        # 如果内容其实是 JSON 错误，再打印一下方便排查
+        text_preview = ""
+        try:
+            text_preview = response.content[:200].decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        if text_preview.strip().startswith("{") or text_preview.strip().startswith("["):
+            print(
+                f"[getImage] {label}: 响应看起来是 JSON 而非图像，Content-Type={ct}, "
+                f"body[:200]={text_preview}"
+            )
+        return None
+
+    # 其他情况（比如明确返回了 JSON 错误）
+    text_preview = ""
+    try:
+        text_preview = response.text[:300]
+    except Exception:
+        pass
+    print(f"[getImage] {label}: 非图像响应，Content-Type={ct}, body[:300]={text_preview}")
+    return None
 
 
 def getAssetInfo(asset_id, assets):
