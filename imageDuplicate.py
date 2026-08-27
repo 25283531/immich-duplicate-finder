@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 from api import getImage
-from utility import display_asset_column
+from utility import display_asset_column, st_dataframe_safe
 from api import getAssetInfo
 from db import load_duplicate_pairs, is_db_populated, save_duplicate_pair
 from streamlit_image_comparison import image_comparison
@@ -453,7 +453,7 @@ def render_batch_selection_panel(assets, duplicate_pairs, immich_server_url, api
             f"**即将删除 {len(pending)} 个资产**；建议跳转到「批量删除管理」Tab 确认并执行。"
         )
         # 简单表格预览
-        st.dataframe(
+        st_dataframe_safe(
             [{
                 "asset_id": it.get("asset_id", ""),
                 "originalPath": it.get("originalPath", ""),

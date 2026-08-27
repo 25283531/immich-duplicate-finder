@@ -15,6 +15,47 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db import query_operation_logs, count_operation_logs
+from utility import st_dataframe_safe
+
+LOG_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "app.log"
+)
+
+
+def _render_runtime_log_panel(max_lines=200):
+    """ 展示 /app/data/app.log 末尾 N 行，方便定位 getImage/网络/权限等问题。 """
+    st.markdown("### 🐞 运行日志（末尾）")
+    col_a, col_b, col_c = st.columns([1, 1, 2])
+    show_n = col_a.slider("显示行数", min_value=20, max_value=1000, value=max_lines, step=20)
+    auto_refresh = col_b.checkbox("每 10 秒自动刷新", value=True)
+    if col_c.button("🔄 刷新日志", use_container_width=True if False else False):
+        pass
+
+    if not os.path.exists(LOG_FILE):
+        st.info(f"日志文件暂未生成：`{LOG_FILE}`。\n\n"
+                "在 Docker 中也可执行：`docker logs --tail 200 immich-duplicate-finder`")
+        return
+
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+        tail = lines[-show_n:] if len(lines) > show_n else lines
+        text = "".join(tail)
+        if not text.strip():
+            st.info("日志为空")
+        else:
+            st.code(text, language=None)
+            st.caption(f"共 {len(lines)} 行，当前显示后 {len(tail)} 行。日志文件：`{LOG_FILE}`")
+    except Exception as e:
+        st.error(f"读取日志失败：{e}")
+
+    if auto_refresh:
+        import time as _t
+        try:
+            _t.sleep(10)
+            st.rerun()
+        except Exception:
+            pass
 
 
 def _render_summary_pills(summary: dict) -> str:
@@ -38,6 +79,16 @@ def _render_summary_pills(summary: dict) -> str:
 
 
 def render_log_page():
+    tab_ops, tab_runtime = st.tabs(["📜 操作日志（删除审计）", "🐞 运行日志（调试）"])
+
+    with tab_ops:
+        _render_operation_logs_tab()
+
+    with tab_runtime:
+        _render_runtime_log_panel()
+
+
+def _render_operation_logs_tab():
     st.header("操作日志")
     st.caption("删除操作审计记录，按时间倒序展示，支持过滤与导出。")
 
@@ -136,7 +187,7 @@ def render_log_page():
                         "disk_action": it.get("disk_action", ""),
                         "api_result": it.get("api_result", ""),
                     })
-                st.dataframe(table_data, width="stretch", hide_index=True)
+                st_dataframe_safe(table_data, width="stretch", hide_index=True)
             else:
                 st.warning("detail_json 缺失或 items 为空")
 

@@ -6,6 +6,7 @@ Immich 原生重复检测页面
 
 import streamlit as st
 from api import get_duplicates, getImage, getAssetInfo, getAssetDetail
+from utility import st_image_safe, st_button_safe
 
 
 # 检测当前 streamlit 版本是否支持 @st.dialog (streamlit>=1.37)
@@ -22,11 +23,11 @@ if _HAS_DIALOG:
         st.markdown(info_text)
         big_img = getImage(asset_id, immich_server_url, "Thumbnail", api_key)
         if big_img:
-            st.image(big_img, caption=caption, use_container_width=True, output_format="auto")
+            st_image_safe(big_img, caption=caption, use_container_width=True, output_format="auto")
         else:
             fast = getImage(asset_id, immich_server_url, "Thumbnail (fast)", api_key)
             if fast:
-                st.image(fast, caption=caption + "（快速缩略图）", use_container_width=True)
+                st_image_safe(fast, caption=caption + "（快速缩略图）", use_container_width=True)
             else:
                 st.warning("暂无法加载缩略图，请检查 Immich 连接。")
         if st.button("关闭预览"):
@@ -67,11 +68,11 @@ def _render_large_preview_panel(immich_server_url, api_key):
         st.markdown(info_text)
         big_img = getImage(asset_id, immich_server_url, "Thumbnail", api_key)
         if big_img:
-            st.image(big_img, caption=caption, use_container_width=True, output_format="auto")
+            st_image_safe(big_img, caption=caption, use_container_width=True, output_format="auto")
         else:
             fast = getImage(asset_id, immich_server_url, "Thumbnail (fast)", api_key)
             if fast:
-                st.image(fast, caption=caption + "（快速缩略图）", use_container_width=True)
+                st_image_safe(fast, caption=caption + "（快速缩略图）", use_container_width=True)
             else:
                 st.warning("暂无法加载缩略图，请检查 Immich 连接。")
 
@@ -118,8 +119,7 @@ def _render_asset_card(
         with c_info:
             st.markdown(f"**🏷️ 资产 {i + 1}**")
             st.markdown(info_md)
-            if st.button(
-                f"⭐ 保留此资产，标记其余为删除候选",
+            if st_button_safe("⭐ 保留此资产，标记其余为删除候选",
                 key=f"keep_{duplicate_id}_{i}",
                 type="primary",
                 use_container_width=True,
@@ -177,7 +177,7 @@ def _render_asset_card(
         with c_img:
             img = getImage(asset_id, immich_server_url, "Thumbnail (fast)", api_key)
             if img:
-                st.image(img, caption=img_caption, use_container_width=True, clamp=True)
+                st_image_safe(img, caption=img_caption, use_container_width=True, clamp=True)
             else:
                 st.warning(
                     "⚠️ 缩略图加载失败。请检查：\n"

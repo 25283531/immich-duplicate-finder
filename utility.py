@@ -1,8 +1,81 @@
 from datetime import datetime
+import inspect
 import streamlit as st
 from datetime import datetime
 from api import deleteAsset, updateAsset
 from db import delete_duplicate_pair
+
+
+# ----------------------------------------------------------------------
+# Streamlit 组件版本兼容层
+# 目标：支持 streamlit==1.32.2 (项目锁定版本) 以及后续 1.37+/1.40+
+# 做法：运行时检测组件签名，自动把新参数转换成对应版本的等价参数。
+# ----------------------------------------------------------------------
+
+# ---- st.image / st.button / st.dataframe 的签名探测（只做一次）----
+_ST_IMAGE_SIG = set(inspect.signature(st.image).parameters.keys())
+_ST_BUTTON_SIG = set(inspect.signature(st.button).parameters.keys())
+_ST_DATAFRAME_SIG = set(inspect.signature(st.dataframe).parameters.keys())
+
+
+def st_image_safe(image, **kwargs):
+    """ st.image 的版本安全封装。
+    - 1.32.x 支持: use_column_width=True/"auto", width=int/None；**不支持** use_container_width / clamp / width="stretch"
+    - 1.40+ 支持: use_container_width=True / width="stretch" / clamp
+    - 本函数自动把新写法映射到当前 streamlit 版本能接受的参数，避免 TypeError。
+    """
+    mapped = {}
+    # 优先级：use_container_width / width="stretch" → use_column_width=True
+    if "use_container_width" in kwargs:
+        ucw = kwargs.pop("use_container_width")
+        if "use_column_width" in _ST_IMAGE_SIG:
+            mapped["use_column_width"] = True if ucw else False
+        else:
+            mapped["use_container_width"] = ucw
+    if isinstance(kwargs.get("width"), str):
+        wstr = kwargs.pop("width")
+        if wstr in ("stretch", "always"):
+            if "use_container_width" in _ST_IMAGE_SIG:
+                mapped.setdefault("use_container_width", True)
+            elif "use_column_width" in _ST_IMAGE_SIG:
+                mapped.setdefault("use_column_width", True)
+        elif wstr == "content":
+            mapped["width"] = None
+        # 其它字符串忽略，交给默认宽度
+
+    # clamp 在 1.32 不存在，需要丢弃
+    clamp = kwargs.pop("clamp", None)
+    if clamp is not None and "clamp" not in _ST_IMAGE_SIG:
+        clamp = None  # 旧版本不支持，静默丢弃
+
+    # output_format 基本都支持，继续传
+    # 剩余参数 (caption / channels 等) 原样保留
+    mapped.update(kwargs)
+    if clamp is not None:
+        mapped["clamp"] = clamp
+
+    return st.image(image, **mapped)
+
+
+def st_button_safe(label, **kwargs):
+    """ st.button 的版本安全封装（use_container_width 在 1.32 里可能不存在）。 """
+    if "use_container_width" in kwargs:
+        ucw = kwargs.pop("use_container_width")
+        if "use_container_width" in _ST_BUTTON_SIG:
+            kwargs["use_container_width"] = ucw
+        elif "use_container_width" not in _ST_BUTTON_SIG and "width" in _ST_BUTTON_SIG:
+            # 一些中间版本 button 也用 width
+            pass  # 没有等价参数，简单忽略即可，按钮默认宽度也能看
+    return st.button(label, **kwargs)
+
+
+def st_dataframe_safe(data=None, **kwargs):
+    """ st.dataframe 的版本安全封装（width="stretch" 回退到默认/use_container_width）。 """
+    if isinstance(kwargs.get("width"), str):
+        wstr = kwargs.pop("width")
+        if wstr == "stretch" and "use_container_width" in _ST_DATAFRAME_SIG:
+            kwargs["use_container_width"] = True
+    return st.dataframe(data, **kwargs)
 
 def compare_and_color_data(value1, value2):
     date1 = datetime.fromisoformat(value1.rstrip('Z'))

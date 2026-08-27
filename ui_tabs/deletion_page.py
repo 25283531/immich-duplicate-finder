@@ -25,6 +25,7 @@ from db import load_path_mappings
 from api import getAssetDetail
 from core.pathMapper import container_to_nas
 from core.nasDeleter import execute_batch
+from utility import st_dataframe_safe
 
 
 def _enrich_items(items, mapping, immich_server_url, api_key, timeout):
@@ -249,7 +250,7 @@ def _render_report_summary(report):
 
     items = report.get("items", [])
     if items:
-        st.dataframe(
+        st_dataframe_safe(
             [{
                 "asset_id": it.get("asset_id", ""),
                 "role": it.get("role", ""),

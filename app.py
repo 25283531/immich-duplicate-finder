@@ -1,8 +1,51 @@
 import os
 import sys
+import logging
+from logging.handlers import RotatingFileHandler
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# ----------------------------------------------------------------------
+# 运行日志：同时输出到 Docker stdout 和 /app/data/app.log（文件循环，总 5MB）
+# 在 Docker 里执行 docker logs immich-duplicate-finder 即可看到；
+# 另外在 UI 中也提供一个"运行日志"Tab 展示末尾 N 行。
+# ----------------------------------------------------------------------
+os.makedirs("data", exist_ok=True)
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "app.log")
+
+_logger = logging.getLogger("immich_df")
+if not _logger.handlers:
+    _logger.setLevel(logging.INFO)
+    fmt = logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    _c = logging.StreamHandler(sys.stdout)
+    _c.setFormatter(fmt)
+    _logger.addHandler(_c)
+    try:
+        _f = RotatingFileHandler(LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8")
+        _f.setFormatter(fmt)
+        _logger.addHandler(_f)
+    except Exception as e:
+        # 权限不足时仅写控制台，不阻塞启动
+        print(f"[logging] 无法写入 {LOG_FILE}: {e}", file=sys.stderr)
+
+_logger.info("=" * 60)
+_logger.info("App 启动 (streamlit script rerun)")
+
+import builtins
+_orig_print = builtins.print
+def _tee_print(*args, **kwargs):
+    try:
+        msg = " ".join(str(a) for a in args)
+        _logger.info(msg)
+    except Exception:
+        pass
+    return _orig_print(*args, **kwargs)
+builtins.print = _tee_print
+
 
 from api import fetchAssets
 from db import (
@@ -23,6 +66,7 @@ from imageDuplicate import (
     show_duplicate_photos_faiss,
     calculateFaissIndex,
 )
+from utility import st_button_safe
 from ui_tabs.mapping_page import render_mapping_page
 from ui_tabs.deletion_page import render_deletion_page
 from ui_tabs.log_page import render_log_page
@@ -150,11 +194,11 @@ def render_sidebar():
         
         # 快捷操作
         with st.expander("📊 快速操作", expanded=False):
-            if st.button('🖼️ Immich 原生重复检测', use_container_width=True):
+            if st_button_safe('🖼️ Immich 原生重复检测', use_container_width=True):
                 st.session_state['nav_page'] = "🖼 Immich 原生重复检测"
                 st.rerun()
             
-            if st.button('🔍 FAISS 查找重复', use_container_width=True):
+            if st_button_safe('🔍 FAISS 查找重复', use_container_width=True):
                 st.session_state['show_faiss_duplicate'] = True
                 st.session_state['nav_page'] = "🔍 图片重复查找 (FAISS)"
                 st.rerun()
