@@ -87,11 +87,15 @@ def execute_batch(
         role = str(it.get("role") or "")
         detail = it.get("detail") or {}
         if isinstance(detail, dict):
-            is_external = bool(detail.get("isExternal", False) or detail.get("is_external", False))
+            has_external_key = "isExternal" in detail or "is_external" in detail
+            if has_external_key:
+                is_external = bool(detail.get("isExternal", False) or detail.get("is_external", False))
+            else:
+                # detail 是 {note: "..."} 形式（存库时字符串被包装），无 isExternal 键
+                # 用 role 推断
+                is_external = (role == "外部媒体库")
         else:
-            # detail 是字符串（备注文本）时，用 role 推断：
-            # - "外部媒体库" → True（路径在 /photos 下，Immich 视为外部库）
-            # - 其他角色 → False
+            # detail 是字符串（备注文本），直接用 role 推断
             is_external = (role == "外部媒体库")
 
         row = {

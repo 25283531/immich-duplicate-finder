@@ -144,11 +144,11 @@ def render_deletion_page(immich_server_url: str, api_key: str, timeout: int):
         keep_flags.append(keep)
         col_b.markdown(f"**ID**: `{it['asset_id']}`")
         col_c.markdown(f"**容器路径**: `{it['originalPath']}`")
-        # detail 可能是 dict (getAssetDetail 返回的资产详情) 或 str (备注文本)
-        # 当 detail 是字符串时，用 role 推断 isExternal
+        # detail 可能是 dict (getAssetDetail 返回的资产详情)、{note: str} (存库包装) 或 str
+        # 只有 dict 且有 isExternal/is_external 键时才直接取；否则用 role 推断
         _d = it.get("detail") or {}
         is_external = False
-        if isinstance(_d, dict):
+        if isinstance(_d, dict) and ("isExternal" in _d or "is_external" in _d):
             is_external = bool(_d.get("isExternal") or _d.get("is_external"))
         else:
             is_external = (it.get("role") == "外部媒体库")
@@ -199,7 +199,7 @@ def render_deletion_page(immich_server_url: str, api_key: str, timeout: int):
     st.subheader("步骤 3：真实执行（危险操作）")
 
     if dry_run:
-        st.info("当前是 DryRun 模式，不会真实删除。要执行真实删除请到侧边栏关闭 DryRun 开关。")
+        st.info("当前是 DryRun 模式，不会真实删除。要执行真实删除请到左侧导航 → ⚙️ 运行开关 关闭 DryRun。")
         return
 
     if first_run_locked:

@@ -28,7 +28,7 @@ def _render_runtime_log_panel(max_lines=200):
     col_a, col_b, col_c = st.columns([1, 1, 2])
     show_n = col_a.slider("显示行数", min_value=20, max_value=1000, value=max_lines, step=20)
     auto_refresh = col_b.checkbox("每 10 秒自动刷新", value=True)
-    if col_c.button("🔄 刷新日志", use_container_width=True if False else False):
+    if col_c.button("🔄 刷新日志"):
         pass
 
     if not os.path.exists(LOG_FILE):
@@ -191,6 +191,6 @@ def _render_operation_logs_tab():
             else:
                 st.warning("detail_json 缺失或 items 为空")
 
-            # 完整 JSON 折叠
-            with st.expander("查看完整 JSON"):
-                st.json(detail, expanded=False)
+            # 完整 JSON（用 st.json 内嵌展示，避免 expander 嵌套）
+            st.markdown("**完整 JSON**")
+            st.json(detail, expanded=False)
