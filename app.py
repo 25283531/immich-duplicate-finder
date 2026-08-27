@@ -54,6 +54,10 @@ from db import (
     startup_processed_duplicate_faiss_db,
     startup_path_mapping_db,
     startup_operation_logs_db,
+    startup_pending_candidates_db,
+    list_pending_candidates,
+    add_pending_candidates,
+    count_pending_candidates,
 )
 from startup import (
     get_credentials,
@@ -130,6 +134,7 @@ startup_processed_assets_db()
 startup_processed_duplicate_faiss_db()
 startup_path_mapping_db()
 startup_operation_logs_db()
+startup_pending_candidates_db()
 
 # 获取初始凭据
 immich_server_url, api_key, images_folder, timeout = get_credentials()
@@ -161,6 +166,16 @@ def setup_session_state():
     for key, default_value in session_defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
+
+    # 从数据库恢复候选列表（支持分批处理：处理完 7 张，下次还能看到剩余 4000+）
+    if not st.session_state.get("selected_asset_ids_to_delete"):
+        try:
+            persisted = list_pending_candidates(limit=50000)
+            if persisted:
+                st.session_state["selected_asset_ids_to_delete"] = persisted
+                _logger.info(f"从数据库恢复 {len(persisted)} 个待删候选")
+        except Exception as e:
+            _logger.warning(f"从数据库恢复候选失败: {e}")
 
 
 def render_sidebar():

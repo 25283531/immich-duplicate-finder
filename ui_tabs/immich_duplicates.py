@@ -7,6 +7,7 @@ Immich 原生重复检测页面
 import streamlit as st
 from api import get_duplicates, getImage, getAssetInfo, getAssetDetail
 from utility import st_image_safe, st_button_safe
+from db import add_pending_candidates
 
 
 # 检测当前 streamlit 版本是否支持 @st.dialog (streamlit>=1.37)
@@ -144,6 +145,7 @@ def _render_asset_card(
                 kept = 0
                 skipped = 0
                 added = 0
+                candidates_to_save = []
                 for aid in all_ids_in_group:
                     if aid == asset_id:
                         kept += 1
@@ -151,18 +153,29 @@ def _render_asset_card(
                     if aid in existing:
                         skipped += 1
                         continue
-                    st.session_state["selected_asset_ids_to_delete"].append(
-                        {
-                            "asset_id": aid,
-                            "originalPath": original_paths_by_id.get(aid, ""),
-                            "asset": {"id": aid},
-                            "detail": (
-                                f"Immich 重复组 {duplicate_id[:8]}，"
-                                f"保留资产 {asset_id[:8]}"
-                            ),
-                        }
-                    )
+                    item = {
+                        "asset_id": aid,
+                        "originalPath": original_paths_by_id.get(aid, ""),
+                        "asset": {"id": aid},
+                        "detail": (
+                            f"Immich 重复组 {duplicate_id[:8]}，"
+                            f"保留资产 {asset_id[:8]}"
+                        ),
+                        "reason": f"Immich 重复组 {duplicate_id[:8]}，保留 {asset_id[:8]}",
+                        "source": "immich_native",
+                    }
+                    st.session_state["selected_asset_ids_to_delete"].append(item)
+                    candidates_to_save.append(item)
                     added += 1
+
+                # 同时持久化到数据库，支持分批处理
+                if candidates_to_save:
+                    try:
+                        db_added = add_pending_candidates(candidates_to_save)
+                    except Exception:
+                        db_added = 0
+                else:
+                    db_added = 0
 
                 msg = (
                     f"✅ 已标记保留 1 个资产，其余 {len(all_ids_in_group) - kept} 个"
@@ -170,7 +183,9 @@ def _render_asset_card(
                 )
                 if skipped > 0:
                     msg += f"（跳过已存在的 {skipped} 个）"
-                msg += "。请到「🚀 批量删除管理」审核后统一执行删除。"
+                if db_added > 0:
+                    msg += f"，已持久化 {db_added} 条到数据库"
+                msg += "。可继续处理，下次打开仍在。"
                 st.success(msg)
                 st.rerun()
 

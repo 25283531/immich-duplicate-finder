@@ -21,7 +21,7 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db import load_path_mappings
+from db import load_path_mappings, remove_pending_candidates, count_pending_candidates, list_pending_candidates
 from api import getAssetDetail
 from core.pathMapper import container_to_nas
 from core.nasDeleter import execute_batch
@@ -62,16 +62,46 @@ def render_deletion_page(immich_server_url: str, api_key: str, timeout: int):
         "⚠️ 最后执行闸门。建议先 DryRun 模拟 → 验证日志 → 二次确认后再真实执行。"
     )
 
-    # ---------- 读取候选清单 ----------
+    # ---------- 读取候选清单（优先 session_state，再从数据库恢复） ----------
     items = st.session_state.get("selected_asset_ids_to_delete", [])
+    if not items:
+        try:
+            items = list_pending_candidates(limit=50000)
+            if items:
+                st.session_state["selected_asset_ids_to_delete"] = items
+                st.info(f"💾 从数据库恢复了 {len(items)} 个待删候选。")
+        except Exception:
+            pass
+
+    # 显示数据库中未处理候选总数
+    try:
+        db_count = count_pending_candidates()
+        if db_count > 0:
+            st.caption(f"📦 数据库中尚有 {db_count} 个未处理的候选（当前加载 {len(items)} 个）")
+    except Exception:
+        pass
+
     if not items:
         st.info(
             "暂无待删候选资产。请先到「重复检测」Tab 执行批量智能选择，"
             "或从重复对卡片中勾选加入待删列表。"
         )
-        if st.button("🧹 清空已选清单", key="clear_pending_btn"):
-            st.session_state["selected_asset_ids_to_delete"] = []
-            st.rerun()
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("📥 从数据库加载候选", key="load_pending_btn"):
+                try:
+                    items = list_pending_candidates(limit=50000)
+                    st.session_state["selected_asset_ids_to_delete"] = items
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"加载失败: {e}")
+        with col_b:
+            if st.button("🗑 清空数据库所有候选", key="clear_db_pending_btn"):
+                from db import clear_pending_candidates
+                n = clear_pending_candidates()
+                st.session_state["selected_asset_ids_to_delete"] = []
+                st.success(f"已清空 {n} 条候选")
+                st.rerun()
         return
 
     # ---------- 读取开关 ----------
@@ -114,9 +144,14 @@ def render_deletion_page(immich_server_url: str, api_key: str, timeout: int):
         keep_flags.append(keep)
         col_b.markdown(f"**ID**: `{it['asset_id']}`")
         col_c.markdown(f"**容器路径**: `{it['originalPath']}`")
+        # detail 可能是 dict (getAssetDetail 返回的资产详情) 或 str (用户填写的备注)
+        _d = it.get("detail") or {}
+        is_external = False
+        if isinstance(_d, dict):
+            is_external = bool(_d.get("isExternal") or _d.get("is_external"))
         col_d.markdown(
             f"**角色**: `{it['role'] or '—'}` | "
-            f"**外部**: {'✅' if it['detail'].get('isExternal') else '—'}"
+            f"**外部**: {'✅' if is_external else '—'}"
         )
         if it["path_error"]:
             col_e.error(f"❌ {it['path_error']}")
@@ -226,8 +261,27 @@ def render_deletion_page(immich_server_url: str, api_key: str, timeout: int):
             st.markdown(f"**批次 log_id={lid}**")
             _render_report_summary(r)
 
-        # 清空已选清单
-        if st.button("🧹 清空已选清单", key="post_clear_btn"):
+        # 从数据库移除已处理的候选（已删除的资产不再出现）
+        processed_ids = [it["asset_id"] for it in pending]
+        try:
+            removed = remove_pending_candidates(processed_ids)
+            st.info(f"✅ 已从数据库移除 {removed} 个已处理的候选。剩余候选可继续在下次会话处理。")
+        except Exception as e:
+            st.warning(f"从数据库移除候选失败（不影响删除结果）：{e}")
+
+        # 同步更新 session_state（保留未处理的）
+        all_remaining = list_pending_candidates(limit=50000)
+        st.session_state["selected_asset_ids_to_delete"] = all_remaining
+        remaining_count = len(all_remaining)
+
+        if remaining_count > 0:
+            st.info(f"🗂 还有 {remaining_count} 个候选未处理，下次打开仍可继续。")
+            if st.button("📋 查看剩余候选", key="view_remaining_btn"):
+                st.rerun()
+        else:
+            st.success("🎉 所有候选已处理完毕！")
+
+        if st.button("🧹 清空剩余清单", key="post_clear_btn"):
             st.session_state["selected_asset_ids_to_delete"] = []
             st.rerun()
 

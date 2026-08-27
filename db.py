@@ -381,3 +381,124 @@ def count_operation_logs(batch_id: str = None, dry_run: int = None, force: int =
     n = c.fetchone()[0]
     conn.close()
     return n
+
+
+# ============================================================
+# 待删候选持久化（pending_candidates）
+# 支持分批处理：处理完 7 张后，下次打开还能看到剩余 4000 张
+# ============================================================
+
+def startup_pending_candidates_db():
+    conn = sqlite3.connect(_db('settings.db'))
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pending_candidates (
+            asset_id TEXT PRIMARY KEY,
+            original_path TEXT,
+            reason TEXT,
+            source TEXT,
+            extra_json TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    ''')
+    c.execute('''
+        CREATE INDEX IF NOT EXISTS idx_pending_created
+        ON pending_candidates(created_at DESC)
+    ''')
+    conn.commit()
+    conn.close()
+
+
+def add_pending_candidates(items: list) -> int:
+    """ 批量添加候选（按 asset_id 去重），返回新增条数。 """
+    conn = sqlite3.connect(_db('settings.db'))
+    c = conn.cursor()
+    added = 0
+    for it in items:
+        aid = str(it.get("asset_id", "") or "")
+        if not aid:
+            continue
+        op = str(it.get("originalPath", "") or "")
+        reason = str(it.get("reason", "") or "")
+        source = str(it.get("source", "") or "")
+        extra = it.get("detail") or it.get("extra") or {}
+        if not isinstance(extra, (dict, list)):
+            extra = {"note": str(extra)}
+        c.execute(
+            "INSERT OR IGNORE INTO pending_candidates"
+            "(asset_id, original_path, reason, source, extra_json)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (aid, op, reason, source, json.dumps(extra, ensure_ascii=False)),
+        )
+        if c.rowcount > 0:
+            added += 1
+    conn.commit()
+    conn.close()
+    return added
+
+
+def list_pending_candidates(limit: int = 5000) -> list:
+    """ 取出所有未处理的候选（默认上限 5000 条防止 UI 卡死）。 """
+    conn = sqlite3.connect(_db('settings.db'))
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute(
+        "SELECT asset_id, original_path, reason, source, extra_json, created_at"
+        " FROM pending_candidates ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    )
+    rows = []
+    for r in c.fetchall():
+        extra = {}
+        if r["extra_json"]:
+            try:
+                extra = json.loads(r["extra_json"])
+            except Exception:
+                extra = {"note": r["extra_json"]}
+        rows.append({
+            "asset_id": r["asset_id"],
+            "originalPath": r["original_path"] or "",
+            "reason": r["reason"] or "",
+            "source": r["source"] or "",
+            "detail": extra,
+            "created_at": r["created_at"],
+        })
+    conn.close()
+    return rows
+
+
+def remove_pending_candidates(asset_ids: list) -> int:
+    """ 批量移除已处理的候选（执行删除成功后调用）。 """
+    if not asset_ids:
+        return 0
+    conn = sqlite3.connect(_db('settings.db'))
+    c = conn.cursor()
+    qs = ",".join("?" * len(asset_ids))
+    c.execute(
+        f"DELETE FROM pending_candidates WHERE asset_id IN ({qs})",
+        list(asset_ids),
+    )
+    n = c.rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def clear_pending_candidates() -> int:
+    """ 清空所有候选。 """
+    conn = sqlite3.connect(_db('settings.db'))
+    c = conn.cursor()
+    c.execute("DELETE FROM pending_candidates")
+    n = c.rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def count_pending_candidates() -> int:
+    conn = sqlite3.connect(_db('settings.db'))
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM pending_candidates")
+    n = c.fetchone()[0]
+    conn.close()
+    return n
