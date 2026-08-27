@@ -89,7 +89,10 @@ def execute_batch(
         if isinstance(detail, dict):
             is_external = bool(detail.get("isExternal", False) or detail.get("is_external", False))
         else:
-            is_external = False
+            # detail 是字符串（备注文本）时，用 role 推断：
+            # - "外部媒体库" → True（路径在 /photos 下，Immich 视为外部库）
+            # - 其他角色 → False
+            is_external = (role == "外部媒体库")
 
         row = {
             "asset_id": asset_id,

@@ -144,11 +144,14 @@ def render_deletion_page(immich_server_url: str, api_key: str, timeout: int):
         keep_flags.append(keep)
         col_b.markdown(f"**ID**: `{it['asset_id']}`")
         col_c.markdown(f"**容器路径**: `{it['originalPath']}`")
-        # detail 可能是 dict (getAssetDetail 返回的资产详情) 或 str (用户填写的备注)
+        # detail 可能是 dict (getAssetDetail 返回的资产详情) 或 str (备注文本)
+        # 当 detail 是字符串时，用 role 推断 isExternal
         _d = it.get("detail") or {}
         is_external = False
         if isinstance(_d, dict):
             is_external = bool(_d.get("isExternal") or _d.get("is_external"))
+        else:
+            is_external = (it.get("role") == "外部媒体库")
         col_d.markdown(
             f"**角色**: `{it['role'] or '—'}` | "
             f"**外部**: {'✅' if is_external else '—'}"
