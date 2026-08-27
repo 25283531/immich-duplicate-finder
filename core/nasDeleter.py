@@ -86,7 +86,10 @@ def execute_batch(
         nas_path = it.get("nas_path")
         role = str(it.get("role") or "")
         detail = it.get("detail") or {}
-        is_external = bool(detail.get("isExternal", False))
+        if isinstance(detail, dict):
+            is_external = bool(detail.get("isExternal", False) or detail.get("is_external", False))
+        else:
+            is_external = False
 
         row = {
             "asset_id": asset_id,
