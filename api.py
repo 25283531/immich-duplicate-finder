@@ -96,25 +96,86 @@ def deleteAssetsBulk(immich_server_url: str, api_key: str, asset_ids,
     默认 force=False -> 放入回收站，安全默认；force=True 永久删除需 UI 额外校验
     data: 可选，预先序列化好的 JSON body（由 nasDeleter 构造，含 {"ids":[...], "force":bool}）。
           若不传则本函数内部按 asset_ids+force 构造。
-    Returns: (ok:bool, status_code:int, response_body_text:str)"""
+
+    兼容性策略：
+      1) 先尝试批量 DELETE /api/assets body={ids:[...], force:bool}
+      2) 若返回 HTTP 4xx/5xx，自动降级为逐个 DELETE /api/assets/{id}（query force=bool）
+    Returns: (ok:bool, status_code:int, response_body_text:str)
+             status_code 为降级成功时为 207（multi-status）"""
+    import logging as _logging
+    _log = _logging.getLogger("immich_df")
     base = (immich_server_url or "").rstrip("/")
-    if not base or not asset_ids:
+    ids_list = []
+    if isinstance(asset_ids, (list, tuple, set)):
+        ids_list = [str(x) for x in asset_ids if x]
+    elif asset_ids:
+        ids_list = [str(asset_ids)]
+    if not base or not ids_list:
         return False, 0, "empty args"
+
     if data is not None:
         payload = data
     else:
-        ids = [str(x) for x in asset_ids]
-        payload = json.dumps({"ids": ids, "force": bool(force)})
+        payload = json.dumps({"ids": ids_list, "force": bool(force)})
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "x-api-key": api_key,
     }
+
+    # ---------- 第 1 次尝试：批量 ----------
     try:
         r = requests.delete(base + "/api/assets", headers=headers, data=payload, timeout=timeout, verify=False)
-        return (200 <= r.status_code < 300), r.status_code, (r.text or "")
+        if 200 <= r.status_code < 300:
+            _log.info(f"deleteAssetsBulk batch ids={len(ids_list)} HTTP {r.status_code}")
+            return True, r.status_code, (r.text or "")
+        # 4xx/5xx 记录错误并降级
+        _log.warning(
+            f"deleteAssetsBulk batch failed HTTP {r.status_code}: "
+            f"{r.text[:500] if r.text else '<empty body>'}. "
+            f"body={payload[:300]} → 自动降级为逐次删除。"
+        )
+        bad_status = r.status_code
+        bad_body = (r.text or "")[:500]
     except requests.exceptions.RequestException as e:
-        return False, 0, str(e)
+        _log.warning(f"deleteAssetsBulk batch exception: {e} → 自动降级为逐次删除")
+        bad_status = 0
+        bad_body = str(e)
+
+    # ---------- 第 2 次尝试：降级，逐个 DELETE /api/assets/{id} ----------
+    ok_count = 0
+    fail_count = 0
+    per_item_results = []
+    for aid in ids_list:
+        try:
+            # 单条删除支持两种格式：body {force} 或 query force=...
+            single_url = f"{base}/api/assets/{aid}?force={str(bool(force)).lower()}"
+            rr = requests.delete(single_url, headers={
+                "Accept": "application/json",
+                "x-api-key": api_key,
+            }, timeout=timeout, verify=False)
+            if 200 <= rr.status_code < 300:
+                ok_count += 1
+                per_item_results.append({"id": aid, "status": rr.status_code, "ok": True})
+            else:
+                fail_count += 1
+                per_item_results.append({
+                    "id": aid, "status": rr.status_code, "ok": False,
+                    "body": (rr.text or "")[:200],
+                })
+                _log.warning(f"单条删除失败 {aid[:8]} HTTP {rr.status_code}: {(rr.text or '')[:200]}")
+        except requests.exceptions.RequestException as ee:
+            fail_count += 1
+            per_item_results.append({"id": aid, "status": 0, "ok": False, "body": str(ee)})
+            _log.warning(f"单条删除异常 {aid[:8]}: {ee}")
+
+    overall_ok = (ok_count > 0 and fail_count == 0)
+    overall_status = 207 if (ok_count > 0 and fail_count > 0) else (200 if overall_ok else bad_status or 500)
+    aggregate_text = (
+        f"batch HTTP {bad_status} 降级为单条删除：成功 {ok_count}/{len(ids_list)}，"
+        f"失败 {fail_count}。首错 body：{bad_body[:200]}"
+    )
+    return overall_ok, overall_status, aggregate_text
 
 
 # ============================================================
